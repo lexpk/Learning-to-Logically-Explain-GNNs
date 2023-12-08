@@ -1,0 +1,10 @@
+name: wlclf
+channels:
+  - conda-forge
+  - anaconda
+dependencies:
+  - python==3.11.*
+  - ipykernel
+  - networkx
+  - matplotlib
+  - scikit-learn
