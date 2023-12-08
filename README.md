@@ -15,7 +15,7 @@ Once installed you can experiment with the code in the notebooks.
 
 Currently, two main functionalities are implemented, the representation and evaluation of C2 formulas and a simple graph classifier based on color refinement and decision trees.
 
-# C2 Formulas
+### C2 Formulas
 
 In c2.py the class Formula is used to represent and evaluate formulas in the logic C2, two-variable first order logic with counting quantifiers. The formulas can be evaluated on graphs:
 
@@ -26,6 +26,7 @@ import networkx as nx
 formula = Exists(Var.x, (Exists(Var.y, E(Var.x, Var.y), 7)))
 formulas.evaluate(nx.fast_gnp_random_graph(10, 0.5))
 ```
+### Graph Classification
 
 In wlclassifier.py a simple graph classifier is implemented:
 ```python
