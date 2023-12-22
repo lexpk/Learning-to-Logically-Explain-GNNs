@@ -1,9 +1,10 @@
 from matplotlib import pyplot as plt
 import networkx as nx
 from sklearn import tree
+from sklearn import naive_bayes
 
 
-class WLClassifier(tree.DecisionTreeClassifier):
+class WLClassifier():
     """Class representing a decision tree classifier that uses the
     Weisfeiler-Lehman algorithm to transform graphs into feature vectors.
     """
@@ -14,7 +15,8 @@ class WLClassifier(tree.DecisionTreeClassifier):
             # lambda x, y: x == y,
             lambda x, y: x >= y,
             # lambda x, y: x < y,
-        ]
+        ],
+        nb=False
     ) -> None:
         """Initialize a WLClassifier object.
 
@@ -27,11 +29,15 @@ class WLClassifier(tree.DecisionTreeClassifier):
         """
         self.training_data = None
         self.eval_data = None
-        self.labels: set[(int, WLType)] = set([(0, WLType())])
+        self.features: set[(int, WLType)] = set([(0, WLType())])
         self.WL_training = None
         self.WL_eval = None
         self.WL_depth = depth
-        self.classifier = tree.DecisionTreeClassifier()
+        self.nb = nb
+        if self.nb:
+            self.classifier = naive_bayes.GaussianNB()
+        else:
+            self.classifier = tree.DecisionTreeClassifier()
         self.comparisons = comparisons
 
     def _set_training_data(self, data: list[nx.Graph]):
@@ -48,7 +54,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
                 )
             ])
         self.WL_training = list(zip(*self.WL_training))
-        self.labels = sorted(self.labels)
+        self.features = sorted(self.features)
 
     def _set_eval_data(self, data: list[nx.Graph]):
         self.eval_data = data
@@ -70,7 +76,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
                 prev_wl[m] for m in graph.neighbors(node)
             ))
             if add_to_labels:
-                self.labels.add((i, new_wl[node]))
+                self.features.add((i, new_wl[node]))
         return new_wl
 
     def _transform(self, training=False):
@@ -87,7 +93,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
                     if comparison(wl[i][node], type)
                 ])
                 for comparison in self.comparisons
-                for (i, type) in self.labels
+                for (i, type) in self.features
             ]
             for wl, graph in zip(wltypes, graphs)
         ]
@@ -115,6 +121,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
             Return a node indicator CSR matrix where non zero elements
             indicates that the samples goes through the nodes.
         """
+        assert not self.nb
         self._set_eval_data(graphs)
         X = self._transform()
         return self.classifier.decision_path(X)
@@ -138,7 +145,8 @@ class WLClassifier(tree.DecisionTreeClassifier):
         X = self._transform(training=True)
         y = labels
         self.classifier.fit(X, y, sample_weight=sample_weight)
-        self.tree_ = self.classifier.tree_
+        if not self.nb:
+            self.tree_ = self.classifier.tree_
 
     def get_depth(self):
         """Return the depth of the decision tree.
@@ -154,6 +162,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
         Returns:
             The number of leaves of the decision tree.
         """
+        assert not self.nb
         return self.classifier.get_n_leaves()
 
     def predict(self, graphs: list[nx.Graph]):
@@ -187,7 +196,7 @@ class WLClassifier(tree.DecisionTreeClassifier):
     def draw(self):
         """Draw the decision tree.
         """
-        assert self.classifier is not None
+        assert self.classifier is not None and not self.nb
         depth = self.classifier.tree_.max_depth
         dim_x, dim_y = 2**(depth), depth + 1
         figure = plt.figure(figsize=(2*dim_x, 2*dim_y))
@@ -216,10 +225,10 @@ class WLClassifier(tree.DecisionTreeClassifier):
         else:
             ax.set_title(f"Contains >{self.classifier.tree_.threshold[node]}")
             nx.draw(
-                self.labels[
+                self.features[
                     self.classifier.tree_.feature[node]
                 ][1].to_networkx(),
-                node_size=300/4**self.labels[
+                node_size=300/4**self.features[
                     self.classifier.tree_.feature[node]
                 ][0],
                 ax=ax
