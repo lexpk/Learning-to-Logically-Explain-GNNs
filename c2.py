@@ -53,61 +53,67 @@ class Formula(ABC):
         pass
 
     @abstractmethod
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         pass
 
 
 class And(Formula):
-    def __init__(
-        self,
-        left: Formula,
-        right: Formula
-    ) -> None:
-        self.left = left
-        self.right = right
+    def __init__(self, *conjunts: Formula) -> None:
+        self.children = conjunts
         self.hash = hash(str(self))
 
     def is_atomic(self) -> bool:
-        return False
+        return bool(self.children)
 
     def free_variables(self) -> set[Var]:
-        return self.left.free_variables() | self.right.free_variables()
+        return set.union(*[c.free_variables() for c in self.children])
 
     def is_gc2(self) -> bool:
-        return self.left.is_gc2() and self.right.is_gc2()
+        for c in self.children:
+            if not c.is_gc2():
+                return False
+        else:
+            return True
 
     def _evaluate(self, graph: Graph, x, y) -> bool:
-        return self.left._evaluate(graph, x, y) \
-            and self.right._evaluate(graph, x, y)
+        return all([c._evaluate(graph, x, y) for c in self.children])
 
-    def __str__(self) -> str:
-        return f"({self.left} ∧ {self.right})"
+    def __repr__(self) -> str:
+        if self.children:
+            return f"({' ∧ '.join([str(c) for c in self.children])})"
+        else:
+            return "⊤"
 
     def __hash__(self) -> int:
         return self.hash
 
 
 class Or(Formula):
-    def __init__(self, left: Formula, right: Formula) -> None:
-        self.left = left
-        self.right = right
+    def __init__(self, *disjuncts: Formula) -> None:
+        self.children = disjuncts
         self.hash = hash(str(self))
 
     def is_atomic(self) -> bool:
-        return False
+        return bool(self.children)
 
     def free_variables(self) -> set[Var]:
-        return self.left.free_variables() | self.right.free_variables()
+        return set.union(*[c.free_variables() for c in self.children])
 
     def is_gc2(self) -> bool:
-        return self.left.is_gc2() and self.right.is_gc2()
+        return all([c.is_gc2() for c in self.children])
 
     def _evaluate(self, graph: Graph, x, y):
-        return self.left._evaluate(graph, x, y) \
-            or self.right._evaluate(graph, x, y)
+        for c in self.children:
+            if c._evaluate(graph, x, y):
+                return True
+        else:
+            return False
 
-    def __str__(self) -> str:
-        return f"({self.left} ∨ {self.right})"
+    def __repr__(self) -> str:
+        if self.children:
+            return f"({' ∨ '.join([str(c) for c in self.children])})"
+        else:
+            return "⊥"
 
     def __hash__(self) -> int:
         return self.hash
@@ -130,7 +136,7 @@ class Not(Formula):
     def _evaluate(self, graph: Graph, x, y):
         return not self.formula._evaluate(graph, x, y)
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"¬{self.formula}"
 
     def __hash__(self) -> int:
@@ -156,7 +162,7 @@ class Implies(Formula):
         return not self.left._evaluate(graph, x, y) \
             or self.right._evaluate(graph, x, y)
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"({self.left} → {self.right})"
 
     def __hash__(self) -> int:
@@ -207,7 +213,7 @@ class ExistsGeq(Formula):
                 graph.evaluations[self, x] = False
                 return False
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃≥{self.count}{self.var.name}.{self.formula}"
 
     def __hash__(self) -> int:
@@ -264,7 +270,7 @@ class ExistsEq(Formula):
                 graph.evaluations[self, x] = True
                 return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃={self.count}{self.var.name}.{self.formula}"
 
     def __hash__(self) -> int:
@@ -316,7 +322,7 @@ class ExistsLeq(Formula):
                 graph.evaluations[self, x] = True
                 return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃≤{self.count}{self.var.name}.{self.formula}"
 
     def __hash__(self) -> int:
@@ -367,7 +373,7 @@ class GuardedExistsGeq(Formula):
                 graph.evaluations[self, x] = False
                 return False
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃≥{self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
 
 
@@ -421,7 +427,7 @@ class GuardedExistsEq(Formula):
                 graph.evaluations[self, x] = True
                 return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃={self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
 
 
@@ -470,8 +476,93 @@ class GuardedExistsLeq(Formula):
                 graph.evaluations[self, x] = True
                 return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∃≤{self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
+
+
+class Exists(Formula):
+    def __init__(self, var: Var, formula: Formula) -> None:
+        self.var = var
+        self.formula = formula
+        self.hash = hash(str(self))
+
+    def is_atomic(self) -> bool:
+        return False
+
+    def free_variables(self) -> set[Var]:
+        return self.formula.free_variables() - {self.var}
+
+    def is_gc2(self) -> bool:
+        return False
+
+    def _evaluate(self, graph: Graph, x, y):
+        if self.var == Var.x:
+            if (self, y) in graph.evaluations:
+                return graph.evaluations[self, y]
+            for x in graph.nodes():
+                if self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, y] = True
+                    return True
+            else:
+                graph.evaluations[self, y] = False
+                return False
+        else:
+            if (self, x) in graph.evaluations:
+                return graph.evaluations[self, x]
+            for y in graph.nodes():
+                if self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, x] = True
+                    return True
+            else:
+                graph.evaluations[self, x] = False
+                return False
+
+    def __repr__(self) -> str:
+        return f"∃{self.var.name}.{self.formula}"
+
+    def __hash__(self) -> int:
+        return self.hash
+
+
+class GuardedExists(Formula):
+    def __init__(self, var: Var, formula: Formula) -> None:
+        self.var = var
+        self.formula = formula
+        self.hash = hash(str(self))
+
+    def is_atomic(self) -> bool:
+        return False
+
+    def free_variables(self) -> set[Var]:
+        return self.formula.free_variables() - {self.var}
+
+    def is_gc2(self) -> bool:
+        return self.formula.is_gc2()
+
+    def _evaluate(self, graph: Graph, x, y):
+        if self.var == Var.x:
+            if (self, y) in graph.evaluations:
+                return graph.evaluations[self, y]
+            for x in graph.neighbors(y):
+                if self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, y] = True
+                    return True
+            else:
+                graph.evaluations[self, y] = False
+                return False
+        else:
+            if (self, x) in graph.evaluations:
+                return graph.evaluations[self, x]
+            for y in graph.neighbors(x):
+                if self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, x] = True
+                    return True
+            else:
+                graph.evaluations[self, x] = False
+                return False
+
+    def __repr__(self) -> str:
+        return f"∃{self.var.name}.(E(x, y) ∧ {self.formula})"
 
 
 class Forall(Formula):
@@ -514,7 +605,7 @@ class Forall(Formula):
                     graph.evaluations[self, x] = True
                     return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∀{self.var.name}.{self.formula}"
 
     def __hash__(self) -> int:
@@ -561,7 +652,7 @@ class GuardedForall(Formula):
                     graph.evaluations[self, x] = True
                     return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"∀{self.var.name}.(E(x, y) → {self.formula})"
 
 
@@ -587,7 +678,7 @@ class E(Formula):
             return True
         return False
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"E({self.v.name}, {self.w.name})"
 
     def __hash__(self) -> int:
@@ -615,7 +706,7 @@ class Atom(Formula):
         else:
             return bool(graph.nodes[y][self.name])
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"{self.name}({self.v.name})"
 
     def __hash__(self) -> int:
@@ -638,10 +729,25 @@ class Top(Formula):
     def _evaluate(self, graph: Graph, x, y):
         return True
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return "⊤"
 
 
-class Var(Enum):
-    x = 0
-    y = 1
+class Bottom(Formula):
+    def __init__(self) -> None:
+        self.hash = hash(str(self))
+
+    def is_atomic(self) -> bool:
+        return True
+
+    def free_variables(self) -> set[Var]:
+        return set()
+
+    def is_gc2(self) -> bool:
+        return True
+
+    def _evaluate(self, graph: Graph, x, y):
+        return False
+
+    def __repr__(self) -> str:
+        return "⊥"
