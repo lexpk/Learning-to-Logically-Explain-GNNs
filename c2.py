@@ -21,32 +21,23 @@ class Formula(ABC):
     def is_gc2(self) -> bool:
         pass
 
-    def evaluate(self, graph: Graph) -> bool:
+    def evaluate(self, graph: Graph, x: int = None, y: int = None) -> bool:
         if not hasattr(graph, "evaluations"):
             graph.evaluations = {}
-        fv = self.free_variables()
-        if len(fv) == 0:
-            return self._evaluate(graph, 0, 0)
-        elif len(fv) == 1:
-            if Var.x in fv:
-                for x in graph.nodes():
-                    if not self._evaluate(graph, x, 0):
-                        return False
-                else:
-                    return True
-            else:
-                for y in graph.nodes():
-                    if not self._evaluate(graph, 0, y):
-                        return False
-                else:
-                    return True
+        if x is None and y is None:
+            return Forall(
+                Var.x,
+                Forall(
+                    Var.y,
+                    self
+                )
+            )._evaluate(graph, Var.x, Var.y)
+        elif x is None:
+            return Forall(Var.y, self)._evaluate(graph, x, Var.y)
+        elif y is None:
+            return Forall(Var.x, self)._evaluate(graph, Var.x, y)
         else:
-            for x in graph.nodes():
-                for y in graph.nodes():
-                    if not self._evaluate(graph, x, y):
-                        return False
-            else:
-                return True
+            return self._evaluate(graph, x, y)
 
     @abstractmethod
     def _evaluate(self, graph: Graph, x, y) -> bool:
@@ -185,10 +176,17 @@ class ExistsGeq(Formula):
     def is_gc2(self) -> bool:
         return False
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -202,6 +200,8 @@ class ExistsGeq(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -236,10 +236,17 @@ class ExistsEq(Formula):
     def is_gc2(self) -> bool:
         return False
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -256,6 +263,8 @@ class ExistsEq(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -293,11 +302,18 @@ class ExistsLeq(Formula):
     def is_gc2(self) -> bool:
         return False
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         self.formula.evaluations = graph.evaluations
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -311,6 +327,8 @@ class ExistsLeq(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.nodes():
                 if self.formula._evaluate(graph, x, y):
@@ -345,10 +363,17 @@ class GuardedExistsGeq(Formula):
     def is_gc2(self) -> bool:
         return self.formula.is_gc2()
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.neighbors(y):
                 if self.formula._evaluate(graph, x, y):
@@ -362,6 +387,8 @@ class GuardedExistsGeq(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.neighbors(x):
                 if self.formula._evaluate(graph, x, y):
@@ -393,10 +420,17 @@ class GuardedExistsEq(Formula):
     def is_gc2(self) -> bool:
         return self.formula.is_gc2()
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.neighbors(y):
                 if self.formula._evaluate(graph, x, y):
@@ -413,6 +447,8 @@ class GuardedExistsEq(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.neighbors(x):
                 if self.formula._evaluate(graph, x, y):
@@ -539,10 +575,17 @@ class GuardedExists(Formula):
     def is_gc2(self) -> bool:
         return self.formula.is_gc2()
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             for x in graph.neighbors(y):
                 if self.formula._evaluate(graph, x, y):
                     graph.evaluations[self, y] = True
@@ -553,6 +596,8 @@ class GuardedExists(Formula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
             for y in graph.neighbors(x):
                 if self.formula._evaluate(graph, x, y):
                     graph.evaluations[self, x] = True
@@ -580,30 +625,37 @@ class Forall(Formula):
     def is_gc2(self) -> bool:
         return False
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         self.formula.evaluations = graph.evaluations
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
+            for x in graph.nodes():
+                if not self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, y] = False
+                    return False
             else:
-                for x in graph.nodes():
-                    if not self.formula._evaluate(graph, x, y):
-                        graph.evaluations[self, y] = False
-                        return False
-                else:
-                    graph.evaluations[self, y] = True
-                    return True
+                graph.evaluations[self, y] = True
+                return True
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
+            for y in graph.nodes():
+                if not self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, x] = False
+                    return False
             else:
-                for y in graph.nodes():
-                    if not self.formula._evaluate(graph, x, y):
-                        graph.evaluations[self, x] = False
-                        return False
-                else:
-                    graph.evaluations[self, x] = True
-                    return True
+                graph.evaluations[self, x] = True
+                return True
 
     def __repr__(self) -> str:
         return f"∀{self.var.name}.{self.formula}"
@@ -627,30 +679,37 @@ class GuardedForall(Formula):
     def is_gc2(self) -> bool:
         return self.formula.is_gc2()
 
+    def _formula_free_variables(self) -> set[Var]:
+        if not hasattr(self, "_formula_free_variables_cache"):
+            self._formula_free_variables_cache = self.formula.free_variables()
+        return self._formula_free_variables_cache
+
     def _evaluate(self, graph: Graph, x, y):
         self.formula.evaluations = graph.evaluations
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
+            if Var.x not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
+            for x in graph.neighbors(y):
+                if not self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, y] = False
+                    return False
             else:
-                for x in graph.neighbors(y):
-                    if not self.formula._evaluate(graph, x, y):
-                        graph.evaluations[self, y] = False
-                        return False
-                else:
-                    graph.evaluations[self, y] = True
-                    return True
+                graph.evaluations[self, y] = True
+                return True
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
+            if Var.y not in self._formula_free_variables():
+                return self.formula._evaluate(graph, x, y)
+            for y in graph.neighbors(x):
+                if not self.formula._evaluate(graph, x, y):
+                    graph.evaluations[self, x] = False
+                    return False
             else:
-                for y in graph.neighbors(x):
-                    if not self.formula._evaluate(graph, x, y):
-                        graph.evaluations[self, x] = False
-                        return False
-                else:
-                    graph.evaluations[self, x] = True
-                    return True
+                graph.evaluations[self, x] = True
+                return True
 
     def __repr__(self) -> str:
         return f"∀{self.var.name}.(E(x, y) → {self.formula})"
