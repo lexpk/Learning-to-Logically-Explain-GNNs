@@ -3,6 +3,33 @@ import networkx as nx
 from c2 import Atom, Var, And, Not, GuardedExistsEq, GuardedExists
 
 
+def color_refinement(
+    graph: nx.Graph,
+    vertex_labels: list[set] = None,
+    max_depth: int = None,
+    fixed_depth: bool = False
+) -> "ColorRefinement":
+    """Apply the color refinement algorithm to a graph.
+
+    Args:
+        graph: The graph on which to apply the algorithm.
+        vertex_labels: The vertex labels of the graph.
+        max_depth: The maximum depth to which to apply the algorithm.
+        fixed_depth: If True always apply the algorithm to the maximum depth.
+
+    Returns:
+        A ColorRefinement object.
+    """
+    if hasattr(graph, "color_refinement"):
+        if graph.color_refinement is not None:
+            if graph.color_refinement.max_depth == max_depth and \
+                    graph.color_refinement.vertex_labels == vertex_labels and \
+                    graph.color_refinement.max_depth == max_depth and\
+                    graph.color_refinement.fixed_depth == fixed_depth:
+                return graph.color_refinement
+    return ColorRefinement(graph, vertex_labels, max_depth, fixed_depth)
+
+
 class ColorRefinement:
     """Class representing the color refinement algorithm.
     """
@@ -10,7 +37,8 @@ class ColorRefinement:
         self,
         graph: nx.Graph,
         vertex_labels: dict[int, tuple] = None,
-        max_depth: int = None
+        max_depth: int = None,
+        fixed_depth: bool = False
     ):
         """Initialize a ColorRefinement object.
 
@@ -20,21 +48,20 @@ class ColorRefinement:
         Returns:
             A ColorRefinement object.
         """
-        if hasattr(graph, "color_refinement"):
-            self = graph.color_refinement
+        graph.color_refinement = None
+        self.graph = graph
+        if vertex_labels is None:
+            self.vertex_labels = [() for _ in self.graph.nodes()]
         else:
-            self.graph = graph
-            if vertex_labels is None:
-                self.vertex_labels = [() for _ in self.graph.nodes()]
-            else:
-                self.vertex_labels = vertex_labels
-            self.node_colors = []
-            self.color_nodes = []
-            self.depth = 0
-            self.max_depth = max_depth
-            self._init_colors()
-            self._refine()
-            graph.color_refinement = self
+            self.vertex_labels = vertex_labels
+        self.node_colors = []
+        self.color_nodes = []
+        self.depth = 0
+        self.max_depth = max_depth
+        self.fixed_depth = fixed_depth
+        self._init_colors()
+        self._refine()
+        graph.color_refinement = self
 
     def _init_colors(self):
         """Initialize the colors of the nodes.
@@ -60,8 +87,9 @@ class ColorRefinement:
                 ), vertex_labels=self.vertex_labels[node])
                 next_node_colors[node] = color
                 next_color_nodes[color].add(node)
-            if len(next_color_nodes) == len(self.color_nodes[-1]):
-                return
+            if not self.fixed_depth:
+                if len(next_color_nodes) == len(self.color_nodes[-1]):
+                    return
             self.color_nodes.append(next_color_nodes)
             self.node_colors.append(tuple(next_node_colors))
             self.depth += 1
@@ -88,6 +116,10 @@ class RefinementColor:
         """
         self.data = tuple(sorted(rc))
         self.vertex_labels = vertex_labels
+        if self.data == tuple():
+            self.depth = 0
+        else:
+            self.depth = max([c.depth for c in self.data]) + 1
         self.hash = hash((self.data, self.vertex_labels))
 
     def __eq__(self, other: "RefinementColor"):
@@ -131,8 +163,7 @@ class RefinementColor:
         return self.hash
 
     def __repr__(self):
-        return f"{self.vertex_labels}\n\t" +\
-            "\n\t".join([repr(t) for t in self.data])
+        return repr(self.chi(self.depth))
 
     def to_networkx(self):
         '''Convert the RefinementColor to a networkx graph.
@@ -186,7 +217,7 @@ class RefinementColor:
         if n == 0:
             return self.chi_0(var)
         else:
-            child_count = (
+            child_count = tuple(
                 (child, sum(1 for c in self.data if c == child))
                 for child in set(self.data)
             )
@@ -201,4 +232,4 @@ class RefinementColor:
                     Not(child.chi(n-1, other))
                     for (child, _) in child_count
                 ])))
-            ])
+            ]).simplify()
