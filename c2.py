@@ -274,28 +274,28 @@ class Not(UnaryConnective):
                        Not(self.child.right)).simplify()
         if isinstance(self.child, ExistsGeq):
             return ExistsLeq(self.child.count - 1, self.child.var,
-                             Not(self.child.formula)).simplify()
+                             self.child.formula).simplify()
         if isinstance(self.child, ExistsLeq):
             return ExistsGeq(self.child.count + 1, self.child.var,
-                             Not(self.child.formula)).simplify()
+                             self.child.formula).simplify()
         if isinstance(self.child, ExistsEq):
             return ExistsNeq(self.child.count, self.child.var,
-                             Not(self.child.formula)).simplify()
+                             self.child.formula).simplify()
         if isinstance(self.child, ExistsNeq):
             return ExistsEq(self.child.count, self.child.var,
-                            Not(self.child.formula)).simplify()
+                            self.child.formula).simplify()
         if isinstance(self.child, GuardedExistsGeq):
             return GuardedExistsLeq(self.child.count - 1, self.child.var,
-                                    Not(self.child.formula)).simplify()
+                                    self.child.formula).simplify()
         if isinstance(self.child, GuardedExistsLeq):
             return GuardedExistsGeq(self.child.count + 1, self.child.var,
-                                    Not(self.child.formula)).simplify()
+                                    self.child.formula).simplify()
         if isinstance(self.child, GuardedExistsEq):
             return GuardedExistsNeq(self.child.count, self.child.var,
-                                    Not(self.child.formula)).simplify()
+                                    self.child.formula).simplify()
         if isinstance(self.child, GuardedExistsNeq):
             return GuardedExistsEq(self.child.count, self.child.var,
-                                   Not(self.child.formula)).simplify()
+                                   self.child.formula).simplify()
         if isinstance(self.child, Forall):
             return Exists(self.child.var, Not(self.child.formula)).simplify()
         if isinstance(self.child, Exists):
@@ -377,11 +377,15 @@ class ExistsGeq(QunatifiedFormula):
                 return False
 
     def __repr__(self) -> str:
-        if self.formula == Top():
-            return f"∃≥{self.count}{self.var.name}"
-        if self.formula == Bottom():
-            return "⊥"
-        return f"∃≥{self.count}{self.var.name}.{self.formula}"
+        if hasattr(self, "_repr_"):
+            return self._repr_
+        elif self.formula == Top():
+            self._repr_ = f"∃≥{self.count}{self.var.name}"
+        elif self.formula == Bottom():
+            self._repr_ = "⊥"
+        else:
+            self._repr_ = f"∃≥{self.count}{self.var.name}.{self.formula}"
+        return self._repr_
 
 
 class ExistsLeq(QunatifiedFormula):
@@ -483,8 +487,6 @@ class GuardedExistsGeq(QunatifiedFormula):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
-            if Var.x not in self._formula_free_variables():
-                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.neighbors(y):
                 if self.formula._evaluate(graph, x, y):
@@ -498,8 +500,6 @@ class GuardedExistsGeq(QunatifiedFormula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
-            if Var.y not in self._formula_free_variables():
-                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.neighbors(x):
                 if self.formula._evaluate(graph, x, y):
@@ -546,8 +546,6 @@ class GuardedExistsEq(QunatifiedFormula):
         if self.var == Var.x:
             if (self, y) in graph.evaluations:
                 return graph.evaluations[self, y]
-            if Var.x not in self._formula_free_variables():
-                return self.formula._evaluate(graph, x, y)
             count = 0
             for x in graph.neighbors(y):
                 if self.formula._evaluate(graph, x, y):
@@ -564,8 +562,6 @@ class GuardedExistsEq(QunatifiedFormula):
         else:
             if (self, x) in graph.evaluations:
                 return graph.evaluations[self, x]
-            if Var.y not in self._formula_free_variables():
-                return self.formula._evaluate(graph, x, y)
             count = 0
             for y in graph.neighbors(x):
                 if self.formula._evaluate(graph, x, y):
@@ -652,7 +648,8 @@ class Forall(QunatifiedFormula):
         super().__init__(None, var, formula)
 
     def _evaluate(self, graph: Graph, x, y) -> bool:
-        return Not(Exists(self.var, Not(self.formula)))._evaluate(graph, x, y)
+        return Not(
+            ExistsGeq(1, self.var, Not(self.formula)))._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
         if self.formula == Top():
@@ -668,8 +665,8 @@ class GuardedForall(QunatifiedFormula):
         super().__init__(None, var, formula)
 
     def _evaluate(self, graph: Graph, x, y) -> bool:
-        return not GuardedExists(
-            Var.x, Not(self.formula)
+        return not GuardedExistsGeq(
+            1, Var.x, Not(self.formula)
         )._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
