@@ -1,9 +1,9 @@
-from math import ceil
+from collections import defaultdict
+from itertools import chain, combinations
 import numpy as np
-from sklearn.discriminant_analysis import StandardScaler
 from c2 import And, Atom, GuardedExistsGeq, Not, Top, Var
 from networkx import adjacency_matrix
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.tree import DecisionTreeClassifier
 
 
 class GC2NodeClassifier:
@@ -15,16 +15,6 @@ class GC2NodeClassifier:
         features,
         label,
         evaluation_depth=2,
-        max_depth=1,
-        criterion="gini",
-        splitter="random",
-        min_samples_split=2,
-        min_samples_leaf=1,
-        min_weight_fraction_leaf=0.0,
-        max_features=None,
-        random_state=None,
-        max_leaf_nodes=None,
-        min_impurity_decrease=0.0,
     ):
         """Initialize a GC2NodeClassifier object. Encode node features
         such that graph.nodes[vertex] yields a dictionary with the featurename
@@ -49,221 +39,233 @@ class GC2NodeClassifier:
                 np.ones((len(graph), 1)),
                 np.array([
                     [
-                        self.graph.nodes[node][feature]
+                        self.graph.nodes[node][feature.name]
                         for feature in self.features[1:]
                     ]
                     for node in self.graph.nodes
                 ], dtype=bool)
             ), axis=1
         )
-        self.eval_depth = evaluation_depth
+        self.eval_depth = evaluation_depth + 1
         self.y = np.array([
-            [graph.nodes[node][self.label]]
-            for node in graph.nodes
+            graph.nodes[node][self.label]
+            for node in self.graph.nodes
         ])
-        p = np.mean(self.y)
-        self.weights = self.y * (1 - p) + (1 - self.y) * p
-        self._y = self.y
-        for i in range(self.eval_depth):
-            self._y = np.concatenate(
-                (
-                    self._y,
-                    self.adj.dot(self._y[:, -1:])/self.degree
-                ),
-                axis=1
-            )
-        self._y = StandardScaler() \
-            .fit(self._y) \
-            .transform(self._y)
-        self.tree_args = {
-            "criterion": criterion,
-            "min_samples_split": min_samples_split,
-            "min_samples_leaf": min_samples_leaf,
-            "min_weight_fraction_leaf": min_weight_fraction_leaf,
-            "max_features": max_features,
-            "random_state": random_state,
-            "max_leaf_nodes": max_leaf_nodes,
-            "min_impurity_decrease": min_impurity_decrease,
-        }
+        self.features_n = [self.features for _ in range(self.eval_depth)]
+        self.X_n = [self.X for _ in range(self.eval_depth)]
+        self.y_n = [None for _ in range(self.eval_depth)]
+        self.known_splits_n = [
+            defaultdict(lambda: []) for _ in range(self.eval_depth)
+        ]
+        self.weights_n = [None for _ in range(self.eval_depth)]
+        self.best_n = [None for _ in range(self.eval_depth)]
+        self.update(0)
 
-    def _extend(self):
-        for level in range(self.eval_depth - 1, -1, -1):
-            X_int = self.adj.dot(self.X)
-            self.dt = DecisionTreeRegressor(max_depth=2)
-            self.dt.fit(
-                np.concatenate(
-                    (self.X, X_int, self.degree - X_int),
-                    axis=1
-                ),
-                self._y[:, level],
-                sample_weight=self.weights.reshape(-1)
-            )
-            features = _new_formulas_from_decision_tree(self.dt)
-            X_features = np.zeros((
-                len(self.graph),
-                len(features) + 4*len(features)**2
-            ))
-            new_formulas = []
-            i = 0
-
-            def check_unique(feature):
-                for j in range(self.X.shape[1]):
-                    if np.array_equal(feature, self.X[:, j]) or \
-                            np.array_equal(feature, 1 - self.X[:, j]):
-                        return False
-                for j in range(i):
-                    if np.array_equal(feature, X_features[:, j]) or \
-                            np.array_equal(feature, 1 - X_features[:, j]):
-                        return False
-                return True
-
-            for sign, id, threshold in features:
-                result = self._to_feature_vector(id, threshold, X_int)
-                if check_unique(result):
-                    X_features[:, i] = result
-                    new_formulas.append(
-                        self._to_formula(sign, id, threshold).simplify()
-                    )
-                    i += 1
-            for ((sign1, id1, threshold1), (sign2, id2, threshold2)) in \
-                    [(f1, f2) for f1 in features for f2 in features]:
-                result = self._to_feature_vector(id1, threshold1, X_int) \
-                    * self._to_feature_vector(id2, threshold2, X_int)
-                if check_unique(result):
-                    X_features[:, i] = result
-                    new_formulas.append(
-                        And(
-                            self._to_formula(sign1, id1, threshold1),
-                            self._to_formula(sign2, id2, threshold2)
-                        ).simplify()
-                    )
-                    i += 1
-                result = self._to_feature_vector(id1, threshold1, X_int) \
-                    * (1 - self._to_feature_vector(id2, threshold2, X_int))
-                if check_unique(result):
-                    X_features[:, i] = result
-                    new_formulas.append(
-                        And(
-                            self._to_formula(sign1, id1, threshold1),
-                            Not(self._to_formula(sign2, id2, threshold2))
-                        ).simplify()
-                    )
-                    i += 1
-                result = (1 - self._to_feature_vector(id1, threshold1, X_int))\
-                    * self._to_feature_vector(id2, threshold2, X_int)
-                if check_unique(result):
-                    X_features[:, i] = result
-                    new_formulas.append(
-                        And(
-                            Not(self._to_formula(sign1, id1, threshold1)),
-                            self._to_formula(sign2, id2, threshold2)
-                        ).simplify()
-                    )
-                    i += 1
-                result = (1 - self._to_feature_vector(id1, threshold1, X_int))\
-                    * (1 - self._to_feature_vector(id2, threshold2, X_int))
-                if check_unique(result):
-                    X_features[:, i] = result
-                    new_formulas.append(
-                        And(
-                            Not(self._to_formula(sign1, id1, threshold1)),
-                            Not(self._to_formula(sign2, id2, threshold2))
-                        ).simplify()
-                    )
-                    i += 1
-            if new_formulas:
-                self.features += new_formulas
-                self.X = np.concatenate((self.X, X_features[:, :i]), axis=1)
-        if new_formulas:
-            return True
+    def update(self, level, counter_example_weight=0):
+        if level >= self.eval_depth:
+            return
+        if level == 0:
+            self.y_n[level] = self.y
+            p = np.mean(self.y)
+            self.weights_n[level] = self.y * (1 - p) + (1 - self.y) * p
         else:
-            return False
-
-    def _to_feature_vector(self, feature_id, threshold, X_int):
-        """Convert an encoding of a geq_formula from a decision tree to the
-        corresponding feature vector.
-
-        Args:
-            polarity: False if the formula is negated.
-            feature_id: The integer encoding the feature.
-            threshold: The integer encoding the threshold.
-            X_int: The accumulated neighbor features.
-
-        Returns:
-            A feature vector.
-        """
-        if feature_id < len(self.features):
-            return self.X[:, feature_id]
-        elif feature_id < 2 * len(self.features):
-            return X_int[:, feature_id - len(self.features)] > threshold
-        else:
-            return (self.degree - X_int)[
-                :, feature_id - 2 * len(self.features)
-            ] > threshold
-
-    def _to_formula(self, sign, feature_id, threshold):
-        """Convert an encoding of a geq_formula from a decision tree to a
-        formula.
-
-        Args:
-            polarity: False if the formula is negated.
-            feature_id: The integer encoding the feature.
-            threshold: The integer encoding the threshold.
-
-        Returns:
-            A formula.
-        """
-        if feature_id < len(self.features):
-            formula = self.features[feature_id]
-        elif feature_id < 2 * len(self.features):
-            feature = self.features[feature_id - len(self.features)]
-            variable = Var.x if Var.y in feature.free_variables() else Var.y
-            formula = GuardedExistsGeq(ceil(threshold), variable, feature)
-        else:
-            feature = self.features[feature_id - 2 * len(self.features)]
-            variable = Var.x if Var.y in feature.free_variables() else Var.y
-            formula = GuardedExistsGeq(ceil(threshold), variable, Not(feature))
-        if sign:
-            return formula
-        else:
-            return Not(formula)
-
-    def formula(self):
-        """Return a formula representing the classifier."""
-        loss = np.mean((np.abs(self.X - self.y)*self.weights), axis=0)
-        pos = np.argmin(loss)
-        neg = np.argmax(loss)
-        if loss[pos] > 1 - loss[neg]:
-            return Not(self.features[neg])
-        else:
-            return self.features[pos]
-
-    def predict(self, graph, vertex):
-        """Predict the label of a vertex in a graph.
-
-        Args:
-            graph: The graph.
-            vertex: The vertex.
-
-        Returns:
-            The predicted label.
-        """
-        return self.formula().evaluate(
-            graph,
-            vertex,
-            vertex,
+            index, sign = self.best_n[level - 1]
+            prediction = self.X_n[level - 1][:, index] if sign \
+                else 1 - self.X_n[level - 1][:, index]
+            support = (prediction != self.y_n[level - 1]) * \
+                self.weights_n[level - 1]
+            if np.any(support):
+                y = self.adj.dot(
+                    self.y_n[level-1] * (
+                        1 + support * counter_example_weight
+                    )
+                )
+                mean = np.mean(y)
+                std = np.std(y)
+                if std == 0:
+                    y = np.zeros(len(self.y))
+                else:
+                    y = (y - mean)/std
+                self.y_n[level] = y > 0
+                self.weights_n[level] = np.abs(y)
+            else:
+                self.y_n[level] = np.zeros(len(self.y))
+                self.weights_n[level] = np.zeros(len(self.y))
+        self.best_n[level] = self.best(
+            self.X_n[level], self.y_n[level], self.weights_n[level]
         )
+        self.update(level + 1)
+
+    def combine(self, level):
+        if len(self.features_n[level]) < 3:
+            return
+        features = self.features_n[level] + list(chain.from_iterable((
+            And(f1, f2), And(f1, Not(f2)),
+            And(Not(f1), f2), And(Not(f1), Not(f2))
+        ) for f1, f2 in combinations(self.features_n[level][1:], 2)))
+        A = self.X_n[level][:, 1:]
+        self.X_n[level] = np.concatenate(
+            (
+                self.X_n[level],
+                np.array(
+                    list(chain.from_iterable((
+                        A[:, i] * A[:, j],
+                        A[:, i] * (1 - A[:, j]),
+                        (1 - A[:, i]) * A[:, j],
+                        (1 - A[:, i]) * (1 - A[:, j])
+                    ) for i, j in combinations(range(A.shape[1]), 2))),
+                    dtype=bool
+                ).transpose()
+            ), axis=1
+        )
+        self.X_n[level], indices = np.unique(
+            self.X_n[level], axis=1, return_index=True
+        )
+        self.features_n[level] = [features[i] for i in indices]
+        self.best_n[level] = self.best(
+            self.X_n[level], self.y_n[level], self.weights_n[level]
+        )
+        self.update(level + 1)
+
+    def extend(self, level, only_misses=False, counter_example_weight=0):
+        if level >= self.eval_depth:
+            return
+        X_neighbor = self.adj.dot(self.X_n[level+1])
+        new_formulas = []
+        new_features = np.zeros(
+            (self.X_n[level].shape[0], X_neighbor.shape[1])
+        )
+        index, sign = self.best_n[level]
+        prediction = self.X_n[level][:, index] if sign \
+            else 1 - self.X_n[level][:, index]
+        support = prediction != self.y_n[level]
+        for feature in range(X_neighbor.shape[1]):
+            splits = np.unique(X_neighbor[:, feature])
+            best_split = 0
+            min_loss = self.y.shape[0]
+            for split in splits:
+                if split in self.known_splits_n[level][feature]:
+                    continue
+                loss = self.loss(
+                    X_neighbor[:, feature].reshape(-1, 1) >= split,
+                    self.y_n[level],
+                    self.weights_n[level] * (
+                        1 + support * counter_example_weight
+                    )
+                )
+                if loss < min_loss:
+                    best_split = split
+                    min_loss = loss
+            free_variable = Var.x if Var.x not in \
+                self.features_n[level+1][feature].free_variables() else Var.y
+            new_formulas.append(
+                GuardedExistsGeq(
+                    int(best_split),
+                    free_variable,
+                    self.features_n[level+1][feature]
+                )
+            )
+            new_features[:, feature] =\
+                X_neighbor[:, feature] >= best_split
+            self.known_splits_n[level][feature].append(best_split)
+        self.X_n[level], indices = np.unique(
+            np.concatenate((self.X_n[level], new_features), axis=1),
+            axis=1,
+            return_index=True
+        )
+        features = self.features_n[level] + new_formulas
+        self.features_n[level] = [features[i] for i in indices]
+        self.best_n[level] = self.best(
+            self.X_n[level], self.y_n[level], self.weights_n[level]
+        )
+        self.update(level + 1)
+
+    def reduce(self, level, size):
+        loss = self.loss(
+            self.X_n[level], self.y_n[level], self.weights_n[level]
+        )
+        complement = self.loss(
+            self.X_n[level], 1 - self.y_n[level], self.weights_n[level]
+        )
+        indices = np.argsort(np.minimum(loss, complement))[:size]
+        self.features_n[level] = [self.features_n[level][i] for i in indices]
+        self.X_n[level] = self.X_n[level][:, indices]
+        self.update(level + 1)
+
+    def best(self, X, y, weights=None):
+        losses = self.loss(X, y, weights)
+        complement = self.loss(X, 1-y, weights)
+        best = np.argmin(losses)
+        worst = np.argmin(complement)
+        if losses[best] < complement[worst]:
+            return best, True
+        else:
+            return worst, False
+
+    def loss(self, X, y, weights=None):
+        if weights is None:
+            return np.sum(X != y.reshape(-1, 1), axis=0)
+        else:
+            return np.sum(
+                (X != y.reshape(-1, 1)) * weights.reshape(-1, 1),
+                axis=0
+            )
 
     def accuracy(self):
-        """Compute the accuracy of the classifier on the training data.
+        index, sign = self.best_n[0]
+        prediction = self.X_n[0][:, index] if sign \
+            else 1 - self.X_n[0][:, index]
+        return np.mean(prediction == self.y)
 
-        Returns:
-            The accuracy.
-        """
-        loss = np.mean((np.abs(self.X - self.y)*self.weights), axis=0)
-        pos = np.argmin(loss)
-        neg = np.argmax(loss)
-        return max(loss[neg], 1 - loss[pos])
+    def formula(self):
+        index, sign = self.best_n[0]
+        formula = (self.features_n[0][index] if sign
+                   else Not(self.features_n[0][index])).simplify()
+        return formula
+
+
+def _contains_feature(Xs, feature):
+    for X in Xs:
+        for j in range(X.shape[1]):
+            if np.array_equal(feature, X[:, j]) or \
+                    np.array_equal(feature, 1 - X[:, j]):
+                return False
+    return True
+
+
+def _dt_to_feature_ids(clf: DecisionTreeClassifier):
+    """Convert a decision tree to a list of feature ids.
+    """
+    tree = clf.tree_
+    features = []
+
+    def recurse(node_id=0):
+        if tree.children_left[node_id] != tree.children_right[node_id]:
+            features.append(tree.feature[node_id])
+            recurse(tree.children_left[node_id])
+            recurse(tree.children_right[node_id])
+    recurse()
+    return features
+
+
+def _dt_to_feature_tuples(clf: DecisionTreeClassifier):
+    """Convert a decision tree to a list of feature tuples.
+    """
+    tree = clf.tree_
+    formulas = []
+
+    def recurse(node_id=0):
+        if tree.children_left[node_id] != tree.children_right[node_id]:
+            formulas.append(
+                (
+                    tree.feature[node_id],
+                    tree.threshold[node_id]
+                )
+            )
+            recurse(tree.children_left[node_id])
+            recurse(tree.children_right[node_id])
+    recurse()
+    return formulas
 
 
 def _c2_formulas_from_decision_tree(clf: DecisionTreeClassifier):
@@ -287,24 +289,3 @@ def _c2_formulas_from_decision_tree(clf: DecisionTreeClassifier):
         else:
             return [(tree.value[node_id][0][1] > tree.value[node_id][0][0],),]
     return recurse()
-
-
-def _new_formulas_from_decision_tree(clf: DecisionTreeClassifier):
-    """Convert a decision tree to a list of formulas.
-    """
-    tree = clf.tree_
-    formulas = []
-
-    def recurse(node_id=0):
-        if tree.children_left[node_id] != tree.children_right[node_id]:
-            formulas.append(
-                (
-                    True,
-                    tree.feature[node_id],
-                    tree.threshold[node_id]
-                )
-            )
-            recurse(tree.children_left[node_id])
-            recurse(tree.children_right[node_id])
-    recurse()
-    return formulas
