@@ -58,6 +58,14 @@ class Formula(ABC):
     def __repr__(self) -> str:
         pass
 
+    @abstractmethod
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        pass
+
 
 class UnaryConnective(Formula, ABC):
     def __init__(self, child: Formula) -> None:
@@ -84,6 +92,13 @@ class UnaryConnective(Formula, ABC):
 
     def __hash__(self) -> int:
         return self.hash
+
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        return self.child.complexity(guarded_weight, unguarded_weight)
 
 
 class BinaryConnective(Formula, ABC):
@@ -114,6 +129,15 @@ class BinaryConnective(Formula, ABC):
 
     def __hash__(self) -> int:
         return self.hash
+
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        return self.left.complexity(
+            guarded_weight, unguarded_weight
+        ) + self.right.complexity(guarded_weight, unguarded_weight)
 
 
 class AssociativeConnective(Formula, ABC):
@@ -150,12 +174,29 @@ class AssociativeConnective(Formula, ABC):
     def __hash__(self) -> int:
         return self.hash
 
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        return max(1, sum(
+            c.complexity(guarded_weight, unguarded_weight)
+            for c in self.children
+        ))
+
 
 class QunatifiedFormula(Formula, ABC):
-    def __init__(self, count: int, var: Var, formula: Formula) -> None:
+    def __init__(
+        self,
+        count: int,
+        var: Var,
+        formula: Formula,
+        outgoing=True
+    ) -> None:
         self.count = count
         self.var = var
         self.formula = formula
+        self.outgoing = outgoing
         self.hash = hash(str(self))
 
     def __eq__(self, other) -> bool:
@@ -197,6 +238,23 @@ class QunatifiedFormula(Formula, ABC):
 
     def __hash__(self) -> int:
         return self.hash
+
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        if isinstance(self, GuardedExistsGeq) or \
+           isinstance(self, GuardedExistsLeq) or \
+           isinstance(self, GuardedExistsEq) or \
+           isinstance(self, GuardedExistsNeq):
+            return guarded_weight * self.formula.complexity(
+                guarded_weight, unguarded_weight
+            )
+        else:
+            return unguarded_weight * self.formula.complexity(
+                guarded_weight, unguarded_weight
+            )
 
 
 class And(AssociativeConnective):
@@ -480,8 +538,14 @@ class ExistsNeq(QunatifiedFormula):
 
 
 class GuardedExistsGeq(QunatifiedFormula):
-    def __init__(self, count: int, var: Var, formula: Formula) -> None:
-        super().__init__(count, var, formula)
+    def __init__(
+        self,
+        count: int,
+        var: Var,
+        formula: Formula,
+        outgoing=True
+    ) -> None:
+        super().__init__(count, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
@@ -512,17 +576,26 @@ class GuardedExistsGeq(QunatifiedFormula):
                 return False
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
-            return f"∃≥{self.count}{self.var.name}.E(x, y)"
+            return f"∃≥{self.count}{self.var.name}.E({v1}, {v2})"
         elif self.formula == Bottom():
             return "⊥"
         else:
-            return f"∃≥{self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
+            return f"∃≥{self.count}{self.var.name}." + \
+                f"E({v1}, {v2}) ∧ {self.formula})"
 
 
 class GuardedExistsLeq(QunatifiedFormula):
-    def __init__(self, count: int, var: Var, formula: Formula) -> None:
-        super().__init__(count, var, formula)
+    def __init__(
+        self,
+        count: int,
+        var: Var,
+        formula: Formula,
+        outgoing=True
+    ) -> None:
+        super().__init__(count, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y):
         return not GuardedExistsGeq(
@@ -530,17 +603,26 @@ class GuardedExistsLeq(QunatifiedFormula):
         )._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
-            return f"∃≤{self.count}{self.var.name}.E(x, y)"
+            return f"∃≤{self.count}{self.var.name}.E({v1}, {v2})"
         elif self.formula == Bottom():
             return "⊤"
         else:
-            return f"∃≤{self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
+            return f"∃≤{self.count}{self.var.name}." + \
+                    f"(E({v1}, {v2}) ∧ {self.formula})"
 
 
 class GuardedExistsEq(QunatifiedFormula):
-    def __init__(self, count: int, var: Var, formula: Formula) -> None:
-        super().__init__(count, var, formula)
+    def __init__(
+        self,
+        count: int,
+        var: Var,
+        formula: Formula,
+        outgoing=True
+    ) -> None:
+        super().__init__(count, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y):
         if self.var == Var.x:
@@ -577,20 +659,29 @@ class GuardedExistsEq(QunatifiedFormula):
                 return True
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
-            return f"∃={self.count}{self.var.name}.E(x, y)"
+            return f"∃={self.count}{self.var.name}.E({v1}, {v2})"
         elif self.formula == Bottom():
             if self.count == 0:
                 return "⊤"
             else:
                 return "⊥"
         else:
-            return f"∃={self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
+            return f"∃={self.count}{self.var.name}." + \
+                f"(E({v1}, {v2}) ∧ {self.formula})"
 
 
 class GuardedExistsNeq(QunatifiedFormula):
-    def __init__(self, count: int, var: Var, formula: Formula) -> None:
-        super().__init__(count, var, formula)
+    def __init__(
+        self,
+        count: int,
+        var: Var,
+        formula: Formula,
+        outgoing=True
+    ) -> None:
+        super().__init__(count, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y):
         return not GuardedExistsEq(
@@ -598,15 +689,18 @@ class GuardedExistsNeq(QunatifiedFormula):
         )._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
-            return f"∃≠{self.count}{self.var.name}.E(x, y)"
+            return f"∃≠{self.count}{self.var.name}.E({v1}, {v2})"
         if self.formula == Bottom():
             if self.count == 0:
                 return "⊥"
             else:
                 return "⊤"
         else:
-            return f"∃≠{self.count}{self.var.name}.(E(x, y) ∧ {self.formula})"
+            return f"∃≠{self.count}{self.var.name}." + \
+                f"(E({v1}, {v2}) ∧ {self.formula})"
 
 
 class Exists(QunatifiedFormula):
@@ -626,8 +720,8 @@ class Exists(QunatifiedFormula):
 
 
 class GuardedExists(QunatifiedFormula):
-    def __init__(self, var: Var, formula: Formula) -> None:
-        super().__init__(None, var, formula)
+    def __init__(self, var: Var, formula: Formula, outgoing=True) -> None:
+        super().__init__(None, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y) -> bool:
         return GuardedExistsGeq(
@@ -635,12 +729,15 @@ class GuardedExists(QunatifiedFormula):
         )._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
-            return "∃{self.var.name}.E(x, y)"
+            return "∃{self.var.name}.E({v1}, {v2})"
         if self.formula == Bottom():
             return "⊥"
         else:
-            return f"∃{self.var.name}.(E(x, y) ∧ {self.formula})"
+            return f"∃{self.var.name}." + \
+                f"(E({v1}, {v2}) ∧ {self.formula})"
 
 
 class Forall(QunatifiedFormula):
@@ -661,8 +758,8 @@ class Forall(QunatifiedFormula):
 
 
 class GuardedForall(QunatifiedFormula):
-    def __init__(self, var: Var, formula: Formula) -> None:
-        super().__init__(None, var, formula)
+    def __init__(self, var: Var, formula: Formula, outgoing=True) -> None:
+        super().__init__(None, var, formula, outgoing)
 
     def _evaluate(self, graph: Graph, x, y) -> bool:
         return not GuardedExistsGeq(
@@ -670,17 +767,20 @@ class GuardedForall(QunatifiedFormula):
         )._evaluate(graph, x, y)
 
     def __repr__(self) -> str:
+        v1, v2 = ('x', 'y') if (self.var == Var.y) == self.outgoing \
+            else ('y', 'x')
         if self.formula == Top():
             return "⊤"
         elif self.formula == Bottom():
-            return f"∀{self.var.name}.¬E(x, y)"
-        return f"∀{self.var.name}.(E(x, y) → {self.formula})"
+            return f"∀{self.var.name}.¬E({v1}, {v2})"
+        return f"∀{self.var.name}." + \
+            f"(E({v1}, {v2}) → {self.formula})"
 
 
 class E(Formula):
     def __init__(self, v: Var, w: Var) -> None:
-        self.v = Var.x if (v == Var.x or w == Var.x) else Var.y
-        self.w = Var.y if (v == Var.y or w == Var.y) else Var.x
+        self.v = v
+        self.w = w
         self.hash = hash(str(self))
 
     def __eq__(self, other) -> bool:
@@ -715,6 +815,13 @@ class E(Formula):
     def __hash__(self) -> int:
         return self.hash
 
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        return 1
+
 
 class Atom(Formula):
     def __init__(self, name: str, v: Var) -> None:
@@ -748,3 +855,10 @@ class Atom(Formula):
 
     def __hash__(self) -> int:
         return self.hash
+
+    def complexity(
+        self,
+        guarded_weight: float = 1,
+        unguarded_weight: float = 1
+    ) -> float:
+        return 1
